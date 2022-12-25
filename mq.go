@@ -10,10 +10,4 @@ type (
 
 	Message struct {
 	}
-
-	UniversialClient struct {
-	}
 )
-
-func NewClient() {
-}

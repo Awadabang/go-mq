@@ -6,6 +6,10 @@ import (
 	"github.com/Awadabang/go-mq"
 )
 
-func (r *RedisMqClient) Consume(ctx context.Context) ([]*mq.Message, error) {
+func (r *RedisListClient) Consume(ctx context.Context) ([]*mq.Message, error) {
+	return nil, nil
+}
+
+func (r *RedisPubSubClient) Consume(ctx context.Context) ([]*mq.Message, error) {
 	return nil, nil
 }

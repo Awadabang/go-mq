@@ -5,12 +5,22 @@ import (
 	"github.com/go-redis/redis/v9"
 )
 
-type RedisMqClient struct {
+type RedisListClient struct {
 	rdb redis.UniversalClient
 }
 
-func NewClient() mq.Mq {
-	return &RedisMqClient{
-		rdb: redis.NewUniversalClient(&redis.UniversalOptions{}),
+type RedisPubSubClient struct {
+	rdb redis.UniversalClient
+}
+
+func NewListClient(opt redis.UniversalOptions) mq.Mq {
+	return &RedisListClient{
+		rdb: redis.NewUniversalClient(&opt),
+	}
+}
+
+func NewPubSubClient(opt redis.UniversalOptions) mq.Mq {
+	return &RedisPubSubClient{
+		rdb: redis.NewUniversalClient(&opt),
 	}
 }
