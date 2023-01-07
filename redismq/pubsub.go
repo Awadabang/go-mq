@@ -23,6 +23,9 @@ func NewPubSubClient(broker redis.UniversalClient, topic, group string, opt *mq.
 	if opt == nil {
 		opt = &mq.PubSubOption{}
 	}
+	if opt.MaxConsumeCount == 0 {
+		opt.MaxConsumeCount = 1
+	}
 	if opt.From == "" {
 		opt.From = "0"
 	}
@@ -43,31 +46,31 @@ func NewPubSubClient(broker redis.UniversalClient, topic, group string, opt *mq.
 		return nil, err
 	}
 
-	xReadGroupArgs := &redis.XReadGroupArgs{
-		Group:    group,                // consumer group
-		Consumer: opt.Consumer,         // Consumer, created on-the-fly
-		Streams:  []string{topic, ">"}, // stream
-		Block:    0,                    // infinite waiting
-		NoAck:    false,                // Confirmation required
-		Count:    1,
-	}
-
-	xReadGroupFromEPLArgs := &redis.XReadGroupArgs{
-		Group:    group,                // consumer group
-		Consumer: opt.Consumer,         // Consumer, created on-the-fly
-		Streams:  []string{topic, "0"}, // stream
-		Block:    0,                    // infinite waiting
-		NoAck:    false,                // Confirmation required
-		Count:    1,
-	}
-
 	xAutoClaimArgs := &redis.XAutoClaimArgs{
-		Start:    "0-0",
 		Stream:   topic,
 		Group:    group,
 		MinIdle:  opt.AutoClaimIdleTime,
-		Count:    1,
+		Start:    "0-0",
+		Count:    opt.MaxConsumeCount,
 		Consumer: opt.Consumer,
+	}
+
+	xReadGroupFromEPLArgs := &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: opt.Consumer,
+		Streams:  []string{topic, "0"},
+		Block:    0,
+		NoAck:    false,
+		Count:    opt.MaxConsumeCount,
+	}
+
+	xReadGroupArgs := &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: opt.Consumer,
+		Streams:  []string{topic, ">"},
+		Block:    0,
+		NoAck:    false,
+		Count:    opt.MaxConsumeCount,
 	}
 
 	return &RedisPubSubClient{
@@ -76,8 +79,8 @@ func NewPubSubClient(broker redis.UniversalClient, topic, group string, opt *mq.
 		group:                 group,
 		opt:                   opt,
 		xAutoClaimArgs:        xAutoClaimArgs,
-		xReadGroupArgs:        xReadGroupArgs,
 		xReadGroupFromEPLArgs: xReadGroupFromEPLArgs,
+		xReadGroupArgs:        xReadGroupArgs,
 	}, nil
 }
 
@@ -92,21 +95,21 @@ func (r *RedisPubSubClient) Produce(ctx context.Context, values map[string]any) 
 
 func (r *RedisPubSubClient) Consume(ctx context.Context) ([]*mq.Message, error) {
 	if dm, err := r.receiveAutoClaimMessage(ctx, r.xAutoClaimArgs); dm != nil && err == nil {
-		return []*mq.Message{dm}, nil
+		return dm, nil
 	}
 
 	if dm, err := r.receiveNextMessage(ctx, r.xReadGroupFromEPLArgs); dm != nil && err == nil {
-		return []*mq.Message{dm}, nil
+		return dm, nil
 	}
 
 	dm, err := r.receiveNextMessage(ctx, r.xReadGroupArgs)
 	if err != nil {
 		return nil, err
 	}
-	return []*mq.Message{dm}, nil
+	return dm, nil
 }
 
-func (r *RedisPubSubClient) receiveAutoClaimMessage(ctx context.Context, args *redis.XAutoClaimArgs) (*mq.Message, error) {
+func (r *RedisPubSubClient) receiveAutoClaimMessage(ctx context.Context, args *redis.XAutoClaimArgs) ([]*mq.Message, error) {
 	msgs, _, err := r.broker.XAutoClaim(ctx, args).Result()
 	if err != nil || ctx.Err() != nil {
 		if err == nil {
@@ -117,10 +120,10 @@ func (r *RedisPubSubClient) receiveAutoClaimMessage(ctx context.Context, args *r
 	if len(msgs) == 0 {
 		return nil, nil
 	}
-	return convertMsgFromRredisMsg(&msgs[0])
+	return convertMsgFromRredisMsg(msgs)
 }
 
-func (r *RedisPubSubClient) receiveNextMessage(ctx context.Context, args *redis.XReadGroupArgs) (*mq.Message, error) {
+func (r *RedisPubSubClient) receiveNextMessage(ctx context.Context, args *redis.XReadGroupArgs) ([]*mq.Message, error) {
 	xStreamSlice, err := r.broker.XReadGroup(ctx, args).Result()
 	if err != nil || ctx.Err() != nil {
 		if err == nil {
@@ -131,14 +134,18 @@ func (r *RedisPubSubClient) receiveNextMessage(ctx context.Context, args *redis.
 	if len(xStreamSlice) == 0 || len(xStreamSlice[0].Messages) == 0 {
 		return nil, nil
 	}
-	return convertMsgFromRredisMsg(&xStreamSlice[0].Messages[0])
+	return convertMsgFromRredisMsg(xStreamSlice[0].Messages)
 }
 
-func convertMsgFromRredisMsg(msg *redis.XMessage) (*mq.Message, error) {
-	return &mq.Message{
-		Id:     msg.ID,
-		Values: msg.Values,
-	}, nil
+func convertMsgFromRredisMsg(msgs []redis.XMessage) ([]*mq.Message, error) {
+	res := make([]*mq.Message, 0, len(msgs))
+	for _, msg := range msgs {
+		res = append(res, &mq.Message{
+			Id:     msg.ID,
+			Values: msg.Values,
+		})
+	}
+	return res, nil
 }
 
 func (r *RedisPubSubClient) SendAcks(ctx context.Context, ids []string) error {

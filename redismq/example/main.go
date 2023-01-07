@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/Awadabang/go-mq"
 	"github.com/Awadabang/go-mq/redismq"
 	"github.com/go-redis/redis/v9"
+	"golang.org/x/sync/errgroup"
 )
 
 func main() {
@@ -41,6 +43,7 @@ func testPubSub(broker redis.UniversalClient) {
 	pubSubClient, err := redismq.NewPubSubClient(broker, "example", "example_group", &mq.PubSubOption{
 		From:              "$",
 		Consumer:          "example_consumer",
+		MaxConsumeCount:   10,
 		AutoClaimIdleTime: 30 * time.Minute,
 		MaxLen:            1000,
 		Approx:            true,
@@ -61,18 +64,32 @@ func testPubSub(broker redis.UniversalClient) {
 	}()
 
 	for {
-		log.Println("consume loop")
 		res, err := pubSubClient.Consume(context.Background())
 		if err != nil {
 			log.Println(err)
 			return
 		}
 
-		ids := make([]string, 0)
+		var (
+			ids []string
+			mtx sync.Mutex
+		)
+
+		eg := errgroup.Group{}
 		for _, v := range res {
-			ids = append(ids, v.Id)
+			data := v
+			eg.Go(func() error {
+				log.Println("handling data..., id: ", data.Id)
+				mtx.Lock()
+				ids = append(ids, data.Id)
+				mtx.Unlock()
+				return nil
+			})
 		}
-		log.Println(ids)
+		if err := eg.Wait(); err != nil {
+			log.Panicln(err)
+		}
+
 		err = pubSubClient.SendAcks(context.Background(), ids)
 		if err != nil {
 			log.Panicln(err)

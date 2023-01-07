@@ -6,13 +6,11 @@ import (
 )
 
 type (
-	// P2P
 	P2PMq interface {
 		Produce(ctx context.Context, values []any) (int64, error)
 		Consume(ctx context.Context) ([]any, error)
 	}
 
-	// PubSub
 	Message struct {
 		Id     string
 		Values map[string]interface{}
@@ -27,6 +25,7 @@ type (
 	PubSubOption struct {
 		From              string
 		Consumer          string
+		MaxConsumeCount   int64
 		AutoClaimIdleTime time.Duration
 		MaxLen            int64
 		Approx            bool
